@@ -84,7 +84,7 @@ jobs:
               with:
                   tagName: 'RDM'
                   releaseName: 'RDM v__VERSION__'
-                  releaseBody: '2.4'
+                  releaseBody: ''
                   releaseDraft: false
                   prerelease: false
                   publish: true
