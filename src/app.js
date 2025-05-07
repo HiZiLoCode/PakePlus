@@ -2,6 +2,7 @@ let newDevice;
 let keyboardAPI;
 const cache = {};
 const receivedDataContainer = document.getElementById("receivedData");
+const statusText = document.getElementById("statusText");
 // 设备连接和断开事件监听
 navigator.hid.addEventListener("connect", async ({ device }) => {
   console.log(`设备插入: ${device.productName}`);
@@ -24,11 +25,13 @@ navigator.hid.addEventListener("disconnect", (event) => {
   console.log(`设备拔出: ${event.device.productName}`);
   newDevice = null;
   document.getElementById("status").innerText = "设备已断开";
+
   // 清除缓存和接收到的数据
   if (keyboardAPI) {
     keyboardAPI.receivedData = []; // 清空接收到的数据
     keyboardAPI.renderReceivedData(); // 更新UI，清空显示的数据
   }
+  statusText.textContent=''
 });
 
 // 生成唯一地址
@@ -134,6 +137,7 @@ class KeyboardAPI {
     // 清空当前列表
     receivedDataContainer.innerHTML = "";
 
+    const averages = [];
     // 遍历 receivedData 数组，并处理每一笔数据
     this.receivedData.forEach((data, index) => {
       // 处理数据：去除 0 并去除一个最大值和一个最小值（如果有超过四个值）
@@ -162,7 +166,7 @@ class KeyboardAPI {
           ? processedData.reduce((acc, curr) => acc + curr, 0) /
             processedData.length
           : 0;
-
+      averages.push(average);
       // 显示每一笔数据及其平均值
       const listItem = document.createElement("li");
       listItem.textContent = `数据 ${index + 1}: ${processedData.join(
@@ -170,6 +174,17 @@ class KeyboardAPI {
       )} | 平均值: ${average.toFixed(2)}`;
       receivedDataContainer.appendChild(listItem);
     });
+    if (averages.length >= 2) {
+      const avg1 = averages[0];
+      const avg2 = averages[1];
+      if (avg1 < -70 && avg2 < -89) {
+        statusText.textContent = "fail";
+      } else {
+        statusText.textContent = "pass";
+      }
+    } else {
+      statusText.textContent = "fail";
+    }
   }
 
   // 数据处理函数
