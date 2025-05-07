@@ -177,7 +177,7 @@ class KeyboardAPI {
     if (averages.length >= 2) {
       const avg1 = averages[0];
       const avg2 = averages[1];
-      if (avg1 < -70 && avg2 < -89) {
+      if (avg1 < -65 && avg2 < -85) {
         statusText.textContent = "fail";
       } else {
         statusText.textContent = "pass";
