@@ -1,6 +1,6 @@
 [package]
 name = "RDM"
-version = "0.0.1"
+version = "0.0.2"
 description = "2.4测试工具"
 authors = ["1024xiaoshen"]
 edition = "2021"
