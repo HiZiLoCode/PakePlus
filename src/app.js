@@ -152,7 +152,7 @@ class KeyboardAPI {
 
     // 清空当前列表
     receivedDataContainer.innerHTML = "";
-     
+
     const averages = [];
     // 遍历 receivedData 数组，并处理每一笔数据
     this.receivedData.forEach((data, index) => {
@@ -180,7 +180,7 @@ class KeyboardAPI {
       const average =
         processedData.length > 0
           ? processedData.reduce((acc, curr) => acc + curr, 0) /
-            processedData.length
+          processedData.length
           : 0;
       averages.push(average);
       console.log(averages);
@@ -263,10 +263,19 @@ const WebHid = {
 
   // 连接设备
   connectDevice: async (newDevice) => {
+    const inputValue = document.getElementById("myInput").value;
+
     if (!newDevice) return;
     newDevice = newDevice;
-    console.log(newDevice, cache);
-
+    if (inputValue.trim().length === 0) {
+      document.getElementById("myInput").value = 1000
+    }
+    // 创建一个Promise，在指定时间后resolve
+    const delayPromise = new Promise((resolve) => {
+      setTimeout(() => {
+        resolve();  // 时间到后resolve这个Promise
+      }, inputValue);
+    });
     // 打开设备
     try {
       if (!newDevice.opened) {
@@ -276,10 +285,14 @@ const WebHid = {
           "status"
         ).innerText = `已连接: ${newDevice.productName}`;
       }
-
-      // 初始化设备
       keyboardAPI = new KeyboardAPI(tagDevice(newDevice));
-      await keyboardAPI.initialize();
+      delayPromise.then(() => {
+        console.log("延迟时间已结束");
+        // 在这里执行你想要延迟执行的代码
+        // 例如：发送初始化命令
+        // 初始化设备
+        keyboardAPI.initialize();
+      })
     } catch (error) {
       console.error("设备连接失败:", error);
     }
