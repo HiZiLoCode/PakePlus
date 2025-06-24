@@ -154,24 +154,35 @@ class KeyboardAPI {
   }
   async sendInitCommands() {
     if (!this.device) return;
-    console.log(this.device, cache, count);
+    let fectPromise
+    if (count === 0) {
+      const inputValue = document.getElementById("delayTime").value;
 
+      fectPromise = new Promise((resolve, reject) => {
+        if (inputValue.trim().length !== 0)
+          setTimeout(() => {
+            resolve(true);
+          }, inputValue)
+      })
+    }
     try {
-      await this.device.sendReport(0x00, new Uint8Array([0xdd]));
-      const firstResponse = await this.waitForResponse();
-      if (firstResponse) {
-        console.log("收到第一笔数据的回复:", firstResponse);
-
-        // 发送第二笔数据
+      fectPromise?.then(async () => {
         await this.device.sendReport(0x00, new Uint8Array([0xcc]));
-        console.log("已发送第二笔数据");
 
-        // 等待收到第二笔数据的回复
-        const secondResponse = await this.waitForResponse();
-        if (secondResponse) {
-          console.log("收到第二笔数据的回复:", secondResponse);
+        const firstResponse = await this.waitForResponse();
+        if (firstResponse) {
+          console.log("收到第一笔数据的回复:", firstResponse);
+          await this.device.sendReport(0x00, new Uint8Array([0xdd]));
+          // 发送第二笔数据
+          console.log("已发送第二笔数据");
+          // 等待收到第二笔数据的回复
+          const secondResponse = await this.waitForResponse();
+          if (secondResponse) {
+            console.log("收到第二笔数据的回复:", secondResponse);
+          }
         }
-      }
+      })
+
     } catch (error) {
       console.error("发送初始化命令失败:", error);
     }
@@ -222,8 +233,8 @@ class KeyboardAPI {
       receivedDataContainer.appendChild(listItem);
     });
     if (averages.length >= 2) {
-      const avg1 = averages[0];
-      const avg2 = averages[1];
+      const avg1 = averages[1];
+      const avg2 = averages[0];
       statusText.style.fontSize = "5rem";
       if ((avg1 < -30 && avg1 > -65) && (avg2 < -40 && avg2 > -85)) {
         statusText.textContent = "pass";
