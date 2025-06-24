@@ -1,5 +1,6 @@
 let newDevice;
 let keyboardAPI;
+let count = 0
 const cache = {};
 const receivedDataContainer = document.getElementById("receivedData");
 const statusText = document.getElementById("statusText");
@@ -95,7 +96,7 @@ class KeyboardAPI {
 
   async initialize() {
     if (!this.device) return;
-    console.log(this.device);
+
 
     try {
       this.device.addEventListener(
@@ -136,7 +137,7 @@ class KeyboardAPI {
   }
   async sendInitCommands() {
     if (!this.device) return;
-    console.log(this.device, cache);
+    console.log(this.device, cache, count);
 
     try {
       await this.device.sendReport(0x00, new Uint8Array([0xdd]));
@@ -147,7 +148,7 @@ class KeyboardAPI {
       console.error("发送初始化命令失败:", error);
     }
   }
-  renderReceivedData() {
+  async renderReceivedData() {
     if (!receivedDataContainer) return;
 
     // 清空当前列表
@@ -202,10 +203,19 @@ class KeyboardAPI {
       } else {
         statusText.textContent = "fail";
         statusText.style.color = "red";
+        if (count !== 0) return
+        setTimeout(async () => {
+          await this.sendInitCommands();
+        }, 300)
       }
     } else {
       statusText.textContent = "fail";
       statusText.style.color = "red";
+      if (count !== 0) return
+      setTimeout(async () => {
+        count++
+        await this.sendInitCommands();
+      }, 300)
     }
   }
 
@@ -263,19 +273,10 @@ const WebHid = {
 
   // 连接设备
   connectDevice: async (newDevice) => {
-    const inputValue = document.getElementById("myInput").value;
 
     if (!newDevice) return;
     newDevice = newDevice;
-    if (inputValue.trim().length === 0) {
-      document.getElementById("myInput").value = 1000
-    }
-    // 创建一个Promise，在指定时间后resolve
-    const delayPromise = new Promise((resolve) => {
-      setTimeout(() => {
-        resolve();  // 时间到后resolve这个Promise
-      }, inputValue);
-    });
+    count = 0
     // 打开设备
     try {
       if (!newDevice.opened) {
@@ -286,13 +287,8 @@ const WebHid = {
         ).innerText = `已连接: ${newDevice.productName}`;
       }
       keyboardAPI = new KeyboardAPI(tagDevice(newDevice));
-      delayPromise.then(() => {
-        console.log("延迟时间已结束");
-        // 在这里执行你想要延迟执行的代码
-        // 例如：发送初始化命令
-        // 初始化设备
-        keyboardAPI.initialize();
-      })
+      keyboardAPI.initialize();
+
     } catch (error) {
       console.error("设备连接失败:", error);
     }
