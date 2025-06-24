@@ -109,7 +109,24 @@ class KeyboardAPI {
       console.error("初始化失败:", error);
     }
   }
+  waitForResponse() {
+    return new Promise((resolve) => {
+      // 设置超时时间（例如3秒）
+      const timeout = setTimeout(() => {
+        this.device.removeEventListener("inputreport", handler);
+        resolve(null);
+      }, 3000);
 
+      const handler = (event) => {
+        const dataArray = new Uint8Array(event.data.buffer);
+        clearTimeout(timeout);
+        this.device.removeEventListener("inputreport", handler);
+        resolve(dataArray);
+      };
+
+      this.device.addEventListener("inputreport", handler, { once: true });
+    });
+  }
   async handleInputReport(event) {
     const dataArray = new Uint8Array(event.data.buffer);
     // 检查是否已存在相同的数据
@@ -141,9 +158,20 @@ class KeyboardAPI {
 
     try {
       await this.device.sendReport(0x00, new Uint8Array([0xdd]));
-      console.log("已发送第一笔数据");
-      await this.device.sendReport(0x00, new Uint8Array([0xcc]));
-      console.log("已发送第二笔数据");
+      const firstResponse = await this.waitForResponse();
+      if (firstResponse) {
+        console.log("收到第一笔数据的回复:", firstResponse);
+
+        // 发送第二笔数据
+        await this.device.sendReport(0x00, new Uint8Array([0xcc]));
+        console.log("已发送第二笔数据");
+
+        // 等待收到第二笔数据的回复
+        const secondResponse = await this.waitForResponse();
+        if (secondResponse) {
+          console.log("收到第二笔数据的回复:", secondResponse);
+        }
+      }
     } catch (error) {
       console.error("发送初始化命令失败:", error);
     }
