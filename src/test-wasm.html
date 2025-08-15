@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WASM GIF处理测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            margin: 20px 0;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        .upload-area:hover {
+            border-color: #007bff;
+        }
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #f8f9fa;
+        }
+        .log {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 20px 0;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .button:hover {
+            background: #0056b3;
+        }
+        .button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .preview {
+            max-width: 240px;
+            max-height: 136px;
+            border: 1px solid #ccc;
+            margin: 10px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WASM GIF处理测试</h1>
+        <p>此页面用于测试修复后的WASM内存访问问题</p>
+        
+        <div id="status" class="status info">
+            正在初始化WASM模块...
+        </div>
+        
+        <div class="upload-area" id="uploadArea">
+            <p>点击或拖拽GIF文件到此处</p>
+            <input type="file" id="fileInput" accept="image/gif" style="display: none;">
+        </div>
+        
+        <div id="preview"></div>
+        
+        <button class="button" id="processBtn" disabled>处理GIF</button>
+        <button class="button" id="clearBtn">清除日志</button>
+        
+        <div id="log" class="log"></div>
+    </div>
+
+    <script src="https://jsd.cdn.zzko.cn/npm/omggif@1.0.10/omggif.min.js"></script>
+    <script src="/qgif.js"></script>
+    <script>
+        let qgifModule = null;
+        let selectedFile = null;
+        
+        const statusEl = document.getElementById('status');
+        const logEl = document.getElementById('log');
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const processBtn = document.getElementById('processBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const previewEl = document.getElementById('preview');
+        
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            logEl.textContent += `[${timestamp}] ${message}\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(message);
+        }
+        
+        function setStatus(message, type = 'info') {
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+        }
+        
+        // 初始化WASM模块
+        async function initWasm() {
+            try {
+                log('开始加载WASM模块...');
+                
+                if (!window.createModule) {
+                    throw new Error('qgif.js未加载');
+                }
+                
+                qgifModule = await window.createModule();
+                log('WASM模块加载成功');
+                
+                // 测试基本功能
+                log('测试WASM基本功能...');
+                qgifModule.FS.writeFile('test.txt', 'Hello WASM');
+                const content = qgifModule.FS.readFile('test.txt', { encoding: 'utf8' });
+                log(`文件读写测试: ${content}`);
+                
+                // 检查内存大小
+                log(`WASM内存大小: ${qgifModule.HEAP8.length} bytes (${(qgifModule.HEAP8.length / 1024 / 1024).toFixed(2)} MB)`);
+                
+                setStatus('WASM模块初始化完成', 'success');
+                processBtn.disabled = false;
+                
+            } catch (error) {
+                log(`WASM初始化失败: ${error.message}`, 'error');
+                setStatus('WASM初始化失败', 'error');
+            }
+        }
+        
+        // 处理文件上传
+        uploadArea.addEventListener('click', () => fileInput.click());
+        
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0 && files[0].type === 'image/gif') {
+                handleFile(files[0]);
+            }
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+        
+        function handleFile(file) {
+            selectedFile = file;
+            log(`选择文件: ${file.name} (${file.size} bytes)`);
+            
+            // 显示预览
+            const url = URL.createObjectURL(file);
+            previewEl.innerHTML = `<img src="${url}" class="preview" alt="GIF预览">`;
+            
+            processBtn.disabled = !qgifModule;
+        }
+        
+        // 处理GIF文件
+        async function processGif() {
+            if (!selectedFile || !qgifModule) {
+                log('请先选择文件并等待WASM初始化完成', 'error');
+                return;
+            }
+            
+            try {
+                setStatus('正在处理GIF...', 'info');
+                processBtn.disabled = true;
+                
+                log(`开始处理文件: ${selectedFile.name}`);
+                
+                // 读取文件
+                const buffer = await selectedFile.arrayBuffer();
+                const data = new Uint8Array(buffer);
+                log(`文件读取完成，大小: ${data.length} bytes`);
+                
+                // 使用修复后的处理函数
+                const result = await processGifFile(selectedFile, qgifModule);
+                
+                log(`处理完成！QGIF大小: ${result.size} bytes`);
+                setStatus(`处理成功！生成QGIF: ${result.size} bytes`, 'success');
+                
+            } catch (error) {
+                log(`处理失败: ${error.message}`, 'error');
+                setStatus('处理失败', 'error');
+            } finally {
+                processBtn.disabled = false;
+            }
+        }
+        
+        // 修复后的GIF处理函数（从utils/gifProcessor.ts复制）
+        async function decomposeGifToPngs(gifData, fs) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            if (!ctx) {
+                throw new Error('无法创建Canvas上下文');
+            }
+            
+            const gr = new window.GifReader(gifData);
+            
+            // 强制目标分辨率
+            const targetW = 240, targetH = 136;
+            canvas.width = targetW;
+            canvas.height = targetH;
+            
+            const pixels = new Uint8ClampedArray(gr.width * gr.height * 4);
+            
+            for (let i = 0; i < gr.numFrames(); i++) {
+                gr.decodeAndBlitFrameRGBA(i, pixels);
+                
+                // 先把原始帧画到临时canvas
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = gr.width;
+                tempCanvas.height = gr.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                if (!tempCtx) {
+                    throw new Error('无法创建临时Canvas上下文');
+                }
+                
+                const imageData = new ImageData(pixels, gr.width, gr.height);
+                tempCtx.putImageData(imageData, 0, 0);
+                
+                // 再缩放到目标canvas
+                ctx.clearRect(0, 0, targetW, targetH);
+                ctx.drawImage(tempCanvas, 0, 0, targetW, targetH);
+                
+                const pngBlob = await new Promise((resolve, reject) =>
+                    canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('PNG生成失败')), 'image/png')
+                );
+                
+                const pngData = new Uint8Array(await pngBlob.arrayBuffer());
+                
+                // 确保文件写入成功
+                try {
+                    fs.writeFile(`input_${i}.png`, pngData);
+                    log(`写入文件 input_${i}.png，大小: ${pngData.length} bytes`);
+                } catch (error) {
+                    log(`写入文件 input_${i}.png 失败: ${error}`, 'error');
+                    throw new Error(`写入PNG文件失败: ${error}`);
+                }
+            }
+        }
+        
+        async function processGifFile(file, qgifModule) {
+            const buffer = await file.arrayBuffer();
+            const data = new Uint8Array(buffer);
+            
+            try {
+                // 清理之前的文件
+                try {
+                    const files = qgifModule.FS.readdir('/');
+                    for (const fileName of files) {
+                        if (fileName.startsWith('input_') || fileName === 'output.qgif') {
+                            try {
+                                qgifModule.FS.unlink('/' + fileName);
+                            } catch (e) {
+                                // 忽略删除失败的错误
+                            }
+                        }
+                    }
+                } catch (e) {
+                    log('清理文件时出错，继续处理...');
+                }
+                
+                // 解析GIF并写入PNG文件
+                await decomposeGifToPngs(data, qgifModule.FS);
+                
+                // 验证文件是否存在
+                const files = qgifModule.FS.readdir('/');
+                const inputFiles = files.filter(f => f.startsWith('input_'));
+                log(`可用的输入文件: ${inputFiles.join(', ')}`);
+                
+                if (inputFiles.length === 0) {
+                    throw new Error('没有找到输入文件');
+                }
+                
+                // 增加WASM内存（如果可能）
+                try {
+                    if (qgifModule.HEAP8.length < 16 * 1024 * 1024) { // 如果内存小于16MB
+                        log(`当前WASM内存大小: ${qgifModule.HEAP8.length}`);
+                        // 尝试扩展内存
+                        if (qgifModule._emscripten_resize_heap) {
+                            qgifModule._emscripten_resize_heap(16 * 1024 * 1024);
+                            log('WASM内存扩展成功');
+                        }
+                    }
+                } catch (e) {
+                    log('无法扩展WASM内存，使用默认大小');
+                }
+                
+                // 包装WASM函数，使用更安全的参数类型
+                const compress_video = qgifModule.cwrap("compress_video_wasm", "number", ["string", "string", "number", "number"]);
+                
+                // 计算FPS（从GIF延迟时间）
+                const gr = new window.GifReader(data);
+                let fps = 10; // 默认FPS
+                if (gr.numFrames() > 0) {
+                    try {
+                        const frameInfo = gr.frameInfo(0);
+                        if (frameInfo && frameInfo.delay) {
+                            fps = Math.max(1, Math.min(30, Math.round(100 / frameInfo.delay)));
+                        }
+                    } catch (e) {
+                        log('无法获取帧延迟，使用默认FPS');
+                    }
+                }
+                
+                log(`准备调用WASM函数，FPS: ${fps}, 帧数: ${inputFiles.length}`);
+                
+                // 调用WASM函数，使用更安全的参数
+                let result;
+                try {
+                    result = compress_video("input_%d.png", "output.qgif", 0, fps);
+                    log(`WASM函数调用结果: ${result}`);
+                } catch (error) {
+                    log(`WASM函数调用失败: ${error}`, 'error');
+                    
+                    // 尝试使用不同的参数格式
+                    try {
+                        log('尝试使用绝对路径...');
+                        result = compress_video("/input_%d.png", "/output.qgif", 0, fps);
+                        log(`使用绝对路径的WASM函数调用结果: ${result}`);
+                    } catch (error2) {
+                        log(`绝对路径也失败: ${error2}`, 'error');
+                        
+                        // 最后尝试：使用第一个文件的具体路径
+                        try {
+                            log('尝试使用具体文件名...');
+                            result = compress_video("input_0.png", "output.qgif", inputFiles.length - 1, fps);
+                            log(`使用具体文件名的WASM函数调用结果: ${result}`);
+                        } catch (error3) {
+                            throw new Error(`WASM函数调用失败: ${error3.message || error3}`);
+                        }
+                    }
+                }
+                
+                // 检查输出文件是否存在
+                let qgifBin;
+                try {
+                    qgifBin = qgifModule.FS.readFile("output.qgif");
+                } catch (error) {
+                    try {
+                        qgifBin = qgifModule.FS.readFile("/output.qgif");
+                    } catch (error2) {
+                        throw new Error('无法读取输出文件 output.qgif');
+                    }
+                }
+                
+                if (!qgifBin || qgifBin.length === 0) {
+                    throw new Error('生成的QGIF文件为空');
+                }
+                
+                log(`QGIF生成成功，大小: ${qgifBin.length} bytes`);
+                
+                return {
+                    qgifBin,
+                    size: qgifBin.length
+                };
+                
+            } catch (error) {
+                log(`处理GIF文件时出错: ${error}`, 'error');
+                throw error;
+            }
+        }
+        
+        // 事件监听
+        processBtn.addEventListener('click', processGif);
+        clearBtn.addEventListener('click', () => {
+            logEl.textContent = '';
+        });
+        
+        // 页面加载完成后初始化
+        window.addEventListener('load', () => {
+            setTimeout(initWasm, 100); // 稍微延迟以确保所有脚本都加载完成
+        });
+    </script>
+</body>
+</html> 
