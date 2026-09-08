@@ -1,0 +1,506 @@
+let newDevice;
+let keyboardAPI;
+let count = 0
+const cache = {};
+const receivedDataContainer = document.getElementById("receivedData");
+const statusText = document.getElementById("statusText");
+// 设备连接和断开事件监听
+navigator.hid.addEventListener("connect", async ({ device }) => {
+  console.log(`设备插入: ${device.productName}`);
+
+  // 检查设备是否为授权的设备
+  const storedDeviceInfo = localStorage.getItem("authorizedDevice");
+  if (storedDeviceInfo) {
+    const { vendorId, productId } = JSON.parse(storedDeviceInfo);
+    if (device.vendorId === vendorId && device.productId === productId) {
+      // 如果是授权的设备，自动连接
+      if (device !== newDevice) {
+        await WebHid.connectDevice(device);
+      }
+    }
+  } else {
+    console.log("没有授权设备，等待用户授权");
+  }
+});
+navigator.hid.addEventListener("disconnect", (event) => {
+  console.log(`设备拔出: ${event.device.productName}`);
+  newDevice = null;
+  document.getElementById("status").innerText = "设备已断开";
+
+  // 清除缓存和接收到的数据
+  if (keyboardAPI) {
+    keyboardAPI.receivedData = []; // 清空接收到的数据
+    keyboardAPI.renderReceivedData(); // 更新UI，清空显示的数据
+  }
+  statusText.textContent = "";
+});
+
+// 生成唯一地址
+const getRandomAddress = () => {
+  return (
+    (self.crypto?.randomUUID && self.crypto.randomUUID()) ||
+    `path:${Math.random()}`
+  );
+};
+
+// 缓存设备信息
+const tagDevice = (device) => {
+  device._address = device._address || getRandomAddress();
+  return (WebHid._cache[device._address] = {
+    _device: device,
+    vendorId: device.vendorId ?? -1,
+    productId: device.productId ?? -1,
+    address: device._address,
+    productName: device.productName,
+  });
+};
+// 绑定下发 0x10 按钮
+// document.getElementById("send0x10").addEventListener("click", async () => {
+//   if (!keyboardAPI || !keyboardAPI.device) {
+//     alert("请先连接设备！");
+//     return;
+//   }
+
+//   // 获取次数和延迟时间
+//   const count = parseInt(document.getElementById("sendCount").value, 10) || 1;
+//   const delay = parseInt(document.getElementById("delayTime").value, 10) || 0;
+//   console.log(count, delay);
+
+//   for (let i = 0; i < count; i++) {
+//     try {
+//       await keyboardAPI.device.sendReport(0x00, new Uint8Array([0xaa, 0x10]));
+//       await keyboardAPI.device.sendReport(0x00, new Uint8Array([0xaa, 0x2e, 0x00, 0x00, 0x18]));
+//       console.log(`已下发第 ${i + 1} 次 0x10`);
+
+//       // UI 上显示
+//       const li = document.createElement("li");
+//       li.textContent = `已下发第 ${i + 1} 次 -> 指令: 0x10`;
+//       receivedDataContainer.appendChild(li);
+//     } catch (err) {
+//       console.error("下发失败:", err);
+//     }
+
+//     // 每次下发之间的延时
+//     if (delay > 0 && i < count - 1) {
+//       await new Promise((resolve) => setTimeout(resolve, 1));
+//     }
+//   }
+// });
+// 生成 HID 过滤器：固定 VID + PID 区间，并额外包含 0x5002 接收器
+const generateHIDFilters = (vid, pidStart, pidEnd, extraPids = []) => {
+  const filters = [];
+  for (let pid = pidStart; pid <= pidEnd; pid++) {
+    filters.push({
+      vendorId: vid,
+      productId: pid,
+      usagePage: 0xff60,
+      usage: 0x0061,
+    });
+  }
+  for (const pid of extraPids) {
+    if (pid < pidStart || pid > pidEnd) {
+      filters.push({
+        vendorId: vid,
+        productId: pid,
+        usagePage: 0xff60,
+        usage: 0x0061,
+      });
+    }
+  }
+  return filters;
+};
+
+// 设备连接按钮
+document.getElementById("connect").addEventListener("click", async () => {
+  const vendorId = 0x36b0; // 键盘 / 接收器 VID
+  const pidStart = 0x3002; // 标准 2.4G Dongle 起始 PID
+  const pidEnd = 0x352f;
+  const extraReceiverPids = [0x5002]; // 5002 接收器
+
+  try {
+    const devices = await navigator.hid.requestDevice({
+      filters: generateHIDFilters(vendorId, pidStart, pidEnd, extraReceiverPids),
+    });
+
+    if (devices.length > 0) {
+      // 授权并保存设备信息
+      const device = devices[0];
+      const deviceInfo = {
+        vendorId: device.vendorId,
+        productId: device.productId,
+        productName: device.productName,
+      };
+      localStorage.setItem("authorizedDevice", JSON.stringify(deviceInfo));
+
+      await WebHid.connectDevice(device);
+    }
+  } catch (error) {
+    console.error("连接设备失败:", error);
+  }
+});
+
+// KeyboardAPI 类
+class KeyboardAPI {
+  constructor(device) {
+    this.address = device.address;
+    this.receivedData = [];
+    this.device;
+
+    if (!cache[this.address]) {
+      cache[this.address] = { hid: device };
+      this.device = device._device;
+    } else {
+      this.device = cache[this.address]._device;
+    }
+  }
+
+  async initialize() {
+    if (!this.device) return;
+
+
+    try {
+      this.device.addEventListener(
+        "inputreport",
+        this.handleInputReport.bind(this)
+      );
+      await this.sendInitCommands();
+      console.log("缓存设备信息:", cache);
+    } catch (error) {
+      console.error("初始化失败:", error);
+    }
+  }
+  waitForResponse() {
+    return new Promise((resolve) => {
+      // 设置超时时间（例如3秒）
+      const timeout = setTimeout(() => {
+        this.device.removeEventListener("inputreport", handler);
+        resolve(null);
+      }, 3000);
+
+      const handler = (event) => {
+        const dataArray = new Uint8Array(event.data.buffer);
+        clearTimeout(timeout);
+        this.device.removeEventListener("inputreport", handler);
+        resolve(dataArray);
+      };
+
+      this.device.addEventListener("inputreport", handler, { once: true });
+    });
+  }
+  async handleInputReport(event) {
+    const dataArray = new Uint8Array(event.data.buffer);
+
+    // 🚫 排除首字节为 208 (0xD0) 的数据
+    if (dataArray[1] === 208) {
+      console.log("跳过首字节为 208 的数据包:", dataArray);
+      return;
+    }
+
+    // 检查是否已存在相同的数据
+    const isDuplicate = this.receivedData.some((existingData) =>
+      this.areUint8ArraysEqual(existingData, dataArray)
+    );
+
+    if (!isDuplicate) {
+      this.receivedData.push(dataArray);
+      console.log(`收到数据 (${this.receivedData.length}):`, this.receivedData);
+
+      // 渲染接收到的数据到页面
+      this.renderReceivedData();
+    } else {
+      console.log("收到重复数据，已忽略。");
+    }
+  }
+  // 比较两个 Uint8Array 是否相等
+  areUint8ArraysEqual(arr1, arr2) {
+    if (arr1.length !== arr2.length) return false;
+    for (let i = 0; i < arr1.length; i++) {
+      if (arr1[i] !== arr2[i]) return false;
+    }
+    return true;
+  }
+  async sendInitCommands() {
+    if (!this.device) return;
+
+    try {
+      // 首次连接按页面延迟等待；重试时短延迟后直接下发
+      const delayMs =
+        count === 0
+          ? parseInt(document.getElementById("delayTime").value, 10) || 0
+          : 0;
+      if (delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+
+      // 主动下发 CC（不再依赖 Promise.then，避免未 resolve 导致不发）
+      await this.device.sendReport(0x00, new Uint8Array([0xcc]));
+      console.log("已发送 CC");
+
+      const firstResponse = await this.waitForResponse();
+      if (firstResponse) {
+        console.log("收到第一笔数据的回复:", firstResponse);
+      } else {
+        console.warn("等待 CC 回复超时，继续发送 DD");
+      }
+
+      // 无论是否收到回复，都继续主动下发 DD
+      await this.device.sendReport(0x00, new Uint8Array([0xdd]));
+      console.log("已发送 DD");
+
+      const secondResponse = await this.waitForResponse();
+      if (secondResponse) {
+        console.log("收到第二笔数据的回复:", secondResponse);
+      } else {
+        console.warn("等待 DD 回复超时");
+      }
+    } catch (error) {
+      console.error("发送初始化命令失败:", error);
+    }
+  }
+  async renderReceivedData() {
+    if (!receivedDataContainer) return;
+
+    // 清空当前列表
+    receivedDataContainer.innerHTML = "";
+
+    const averages = [];
+    // 遍历 receivedData 数组，并处理每一笔数据
+    this.receivedData.forEach((data, index) => {
+      // 处理数据：去除 0 并去除一个最大值和一个最小值（如果有超过四个值）
+      let processedData = this.processData(data).filter((value) => value !== 0); // 去除0
+
+      if (processedData.length > 4) {
+        // 如果数据项超过4个，去除一个最大值和一个最小值
+        const minValue = Math.min(...processedData);
+        const maxValue = Math.max(...processedData);
+
+        // 去除一个最小值和一个最大值
+        // 去除一个最小值
+        const minIndex = processedData.indexOf(minValue);
+        if (minIndex !== -1) processedData.splice(minIndex, 1);
+
+        // 去除一个最大值
+        const maxIndex = processedData.indexOf(maxValue);
+        if (maxIndex !== -1) processedData.splice(maxIndex, 1);
+      }
+
+      console.log(processedData);
+
+      // 计算该笔数据的平均值
+      const average =
+        processedData.length > 0
+          ? processedData.reduce((acc, curr) => acc + curr, 0) /
+          processedData.length
+          : 0;
+      averages.push(average);
+      console.log(averages);
+
+      // 显示每一笔数据及其平均值
+      const listItem = document.createElement("li");
+      listItem.textContent = `数据 ${index + 1}: ${processedData.join(
+        ", "
+      )} | 平均值: ${average.toFixed(2)}`;
+      receivedDataContainer.appendChild(listItem);
+    });
+    if (averages.length >= 2) {
+      const avg1 = averages[1];
+      const avg2 = averages[0];
+      statusText.style.fontSize = "5rem";
+      if ((avg1 < -30 && avg1 > -65) && (avg2 < -40 && avg2 > -85)) {
+        statusText.textContent = "pass";
+        statusText.style.color = "#8BC34A";
+      } else {
+        statusText.textContent = "fail";
+        statusText.style.color = "red";
+        if (count !== 0) return
+        setTimeout(async () => {
+          await this.sendInitCommands();
+        }, 300)
+      }
+    } else {
+      statusText.textContent = "fail";
+      statusText.style.color = "red";
+      if (count !== 0) return
+      setTimeout(async () => {
+        count++
+        await this.sendInitCommands();
+      }, 300)
+    }
+  }
+
+  // 数据处理函数
+  processData(data) {
+    const processed = [];
+    for (let i = 0; i < data.length; i++) {
+      if (i <= 1) {
+        // 跳过 221, 221
+        i++;
+        continue;
+      }
+      if (data[i] === 1) {
+        // 1表示负数
+        processed.push(-data[i + 1]);
+        i++;
+      } else if (data[i] === 0) {
+        // 0表示整数，保留原值
+        processed.push(data[i + 1]);
+        i++;
+      } else {
+        // 其他情况，按原样处理
+        processed.push(data[i]);
+      }
+    }
+    return processed;
+  }
+
+  async write(arr) {
+    await this.openPromise;
+    const data = new Uint8Array(arr.slice(1));
+    this.fastForwardGlobalBuffer(Date.now());
+    eventWaitBuffer[this.address] = [];
+    await this._hidDevice?._device.sendReport(0, data);
+  }
+}
+
+// WebHid 对象：负责设备连接与自动重连
+const WebHid = {
+  _cache: {},
+
+  // 自动连接设备
+  autoConnect: async () => {
+    try {
+      const devices = await navigator.hid.getDevices();
+      console.log(devices, cache);
+
+      if (devices.length > 0) {
+        await WebHid.connectDevice(devices[0]);
+      }
+    } catch (error) {
+      console.error("自动连接设备失败:", error);
+    }
+  },
+
+  // 连接设备
+  connectDevice: async (newDevice) => {
+
+    if (!newDevice) return;
+    newDevice = newDevice;
+    count = 0
+    // 打开设备
+    try {
+      if (!newDevice.opened) {
+        await newDevice.open();
+        console.log(`已连接设备: ${newDevice.productName}`);
+        document.getElementById(
+          "status"
+        ).innerText = `已连接: ${newDevice.productName}\nVID: 0x${newDevice.vendorId
+          .toString(16)
+          .toUpperCase()}\nPID: 0x${newDevice.productId
+          .toString(16)
+          .toUpperCase()}`;
+      }
+      keyboardAPI = new KeyboardAPI(tagDevice(newDevice));
+      keyboardAPI.initialize();
+
+    } catch (error) {
+      console.error("设备连接失败:", error);
+    }
+  },
+};
+class HidDeivce {
+  _hidDevice;
+  interface;
+  vendorId;
+  productId;
+  productName;
+  address;
+  openPromise;
+  constructor(address) {
+    if (address == "demo") {
+      this.vendorId = 0x9a9a;
+      this.productId = 0xbaba;
+      this.productName = "Test";
+      return;
+    }
+    this._hidDevice = WebHid._cache[address];
+    if (this._hidDevice) {
+      this.vendorId = this._hidDevice.vendorId;
+      this.productId = this._hidDevice.productId;
+      this.address = this._hidDevice.address;
+      this.interface = this._hidDevice.interface;
+      this.productName = this._hidDevice.productName;
+      globalBuffer[this.address] = globalBuffer[this.address] || [];
+      eventWaitBuffer[this.address] = eventWaitBuffer[this.address] || [];
+      if (!this._hidDevice._device.opened) {
+        this.open();
+      }
+    }
+  }
+
+  async open() {
+    if (this._hidDevice && !this._hidDevice._device.opened) {
+      this.openPromise = this._hidDevice._device.open();
+      this.setupListeners();
+      await this.openPromise;
+    }
+    return Promise.resolve();
+  }
+
+  addListeners(fn) {
+    if (this._hidDevice) {
+      this._hidDevice._device.oninputreport = fn;
+    }
+  }
+
+  setupListeners() {
+    if (this._hidDevice) {
+      this._hidDevice._device.addEventListener("inputreport", (e) => {
+        if (eventWaitBuffer[this.address].length !== 0) {
+          // It should be impossible to have a handler in the buffer
+          // that has a ts that happened after the current message
+          // came in
+          eventWaitBuffer[this.address].shift()(new Uint8Array(e.data.buffer));
+        } else {
+          globalBuffer[this.address].push({
+            currTime: Date.now(),
+            message: new Uint8Array(e.data.buffer),
+          });
+        }
+      });
+    }
+  }
+
+  read(fn) {
+    if (globalBuffer[this.address]?.length > 0) {
+      // this should be a noop normally
+      fn(undefined, globalBuffer[this.address].shift()?.message);
+    } else {
+      eventWaitBuffer[this.address].push((data) => fn(undefined, data));
+    }
+  }
+
+  readP = promisify((arg) => this.read(arg));
+
+  fastForwardGlobalBuffer(time) {
+    let messagesLeft = globalBuffer[this.address]?.length;
+    while (messagesLeft) {
+      messagesLeft--;
+      // message in buffer happened before requested time
+      if (globalBuffer[this.address][0].currTime < time) {
+        globalBuffer[this.address].shift();
+      } else {
+        break;
+      }
+    }
+  }
+
+  async write(arr) {
+    await this.openPromise;
+    const data = new Uint8Array(arr.slice(1));
+    this.fastForwardGlobalBuffer(Date.now());
+    eventWaitBuffer[this.address] = [];
+    await this._hidDevice?._device.sendReport(0, data);
+  }
+}
+// 自动连接已授权的设备
+WebHid.autoConnect();
