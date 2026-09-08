@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>2.4G 设备连接</title>
+</head>
+
+<body>
+  <button id="connect">连接设备</button>
+  <p id="status">未连接</p>
+  <p>数据延迟时间:<input type="number" id="delayTime" value="1000"></input>ms</p>
+  <!-- <p>
+    下发次数: <input type="number" id="sendCount" value="1" min="1">
+    <button id="send0x10">下发 0x10</button>
+  </p> -->
+  <!-- 显示接收到的数据 -->
+  <h2>接收到的数据:</h2>
+  <ul id="receivedData"></ul>
+  <h2 id="statusText" style="margin-top: 50px;width: 100%;text-align: center;"></h2>
+  <script src="./app.js"></script>
+</body>
+
+</html>
