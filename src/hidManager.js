@@ -7,7 +7,7 @@ class HIDManager {
     this.vendorId = 0x36b0; // 键盘 / 接收器 VID
     this.pidStart = 0x3002; // 标准 2.4G Dongle 起始 PID
     this.pidEnd = 0x352f; // 结束 PID
-    this.extraReceiverPids = [0x5002]; // 5002 接收器
+    this.extraReceiverPids = [0x4002, 0x5002, 0x6002]; // 额外接收器 PID
     this.deviceChangeTimers = new Map();
     this.connectedDevices = new Map();
     this.receivedData = [];
