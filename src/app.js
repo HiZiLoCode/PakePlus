@@ -86,7 +86,7 @@ const tagDevice = (device) => {
 //     }
 //   }
 // });
-// 生成 HID 过滤器：固定 VID + PID 区间，并额外包含 0x5002 接收器
+// 生成 HID 过滤器：固定 VID + PID 区间，并额外包含 0x4002/0x5002/0x6002 接收器
 const generateHIDFilters = (vid, pidStart, pidEnd, extraPids = []) => {
   const filters = [];
   for (let pid = pidStart; pid <= pidEnd; pid++) {
@@ -115,7 +115,7 @@ document.getElementById("connect").addEventListener("click", async () => {
   const vendorId = 0x36b0; // 键盘 / 接收器 VID
   const pidStart = 0x3002; // 标准 2.4G Dongle 起始 PID
   const pidEnd = 0x352f;
-  const extraReceiverPids = [0x5002]; // 5002 接收器
+  const extraReceiverPids = [0x4002, 0x5002, 0x6002]; // 额外接收器 PID
 
   try {
     const devices = await navigator.hid.requestDevice({
@@ -169,9 +169,21 @@ class KeyboardAPI {
       console.error("初始化失败:", error);
     }
   }
-  waitForResponse() {
+  // 仅识别 CC / DD 命令回复（首字节为 0xCC 或 0xDD）
+  isCcOrDdResponse(dataArray, expectedCmd = null) {
+    if (!dataArray || dataArray.length === 0) return false;
+    // 排除心跳等 0xD0 包
+    if (dataArray[0] === 0xd0 || dataArray[1] === 0xd0) return false;
+
+    const cmd = dataArray[0];
+    if (expectedCmd != null) {
+      return cmd === expectedCmd;
+    }
+    return cmd === 0xcc || cmd === 0xdd;
+  }
+
+  waitForResponse(expectedCmd) {
     return new Promise((resolve) => {
-      // 设置超时时间（例如3秒）
       const timeout = setTimeout(() => {
         this.device.removeEventListener("inputreport", handler);
         resolve(null);
@@ -179,33 +191,36 @@ class KeyboardAPI {
 
       const handler = (event) => {
         const dataArray = new Uint8Array(event.data.buffer);
+        // 其它上报一律忽略，继续等 CC/DD 回复
+        if (!this.isCcOrDdResponse(dataArray, expectedCmd)) {
+          console.log("忽略非目标回复:", dataArray);
+          return;
+        }
         clearTimeout(timeout);
         this.device.removeEventListener("inputreport", handler);
         resolve(dataArray);
       };
 
-      this.device.addEventListener("inputreport", handler, { once: true });
+      this.device.addEventListener("inputreport", handler);
     });
   }
+
   async handleInputReport(event) {
     const dataArray = new Uint8Array(event.data.buffer);
 
-    // 🚫 排除首字节为 208 (0xD0) 的数据
-    if (dataArray[1] === 208) {
-      console.log("跳过首字节为 208 的数据包:", dataArray);
+    // 只抓 CC / DD 命令返回，其它一律不入库
+    if (!this.isCcOrDdResponse(dataArray)) {
+      console.log("忽略非 CC/DD 数据包:", dataArray);
       return;
     }
 
-    // 检查是否已存在相同的数据
     const isDuplicate = this.receivedData.some((existingData) =>
       this.areUint8ArraysEqual(existingData, dataArray)
     );
 
     if (!isDuplicate) {
       this.receivedData.push(dataArray);
-      console.log(`收到数据 (${this.receivedData.length}):`, this.receivedData);
-
-      // 渲染接收到的数据到页面
+      console.log(`收到 CC/DD 数据 (${this.receivedData.length}):`, this.receivedData);
       this.renderReceivedData();
     } else {
       console.log("收到重复数据，已忽略。");
@@ -236,9 +251,9 @@ class KeyboardAPI {
       await this.device.sendReport(0x00, new Uint8Array([0xcc]));
       console.log("已发送 CC");
 
-      const firstResponse = await this.waitForResponse();
+      const firstResponse = await this.waitForResponse(0xcc);
       if (firstResponse) {
-        console.log("收到第一笔数据的回复:", firstResponse);
+        console.log("收到 CC 回复:", firstResponse);
       } else {
         console.warn("等待 CC 回复超时，继续发送 DD");
       }
@@ -247,9 +262,9 @@ class KeyboardAPI {
       await this.device.sendReport(0x00, new Uint8Array([0xdd]));
       console.log("已发送 DD");
 
-      const secondResponse = await this.waitForResponse();
+      const secondResponse = await this.waitForResponse(0xdd);
       if (secondResponse) {
-        console.log("收到第二笔数据的回复:", secondResponse);
+        console.log("收到 DD 回复:", secondResponse);
       } else {
         console.warn("等待 DD 回复超时");
       }
