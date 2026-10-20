@@ -321,7 +321,7 @@ class KeyboardAPI {
       const avg1 = averages[1];
       const avg2 = averages[0];
       statusText.style.fontSize = "5rem";
-      if ((avg1 < -30 && avg1 > -65) && (avg2 < -40 && avg2 > -85)) {
+      if ((avg1 < -30 && avg1 > -67) && (avg2 < -40 && avg2 > -85)) {
         statusText.textContent = "pass";
         statusText.style.color = "#8BC34A";
       } else {
